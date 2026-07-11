@@ -1,0 +1,12 @@
+# DEV / TRAIN dependencies — install this locally to download data, train, run
+# notebooks and tests. It includes the runtime set (via -r) plus the heavier
+# packages that are NOT needed by the deployed app.
+#
+# Install:  pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+matplotlib==3.10.3        # reports/figures (EDA, PR curve) — Stage 2+
+datasets==3.6.0           # download ViHSD (scripts/download_data.py)
+huggingface_hub==0.34.4   # gated-dataset auth for datasets
+pytest==8.3.5             # test suite

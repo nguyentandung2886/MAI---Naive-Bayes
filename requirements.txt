@@ -1,21 +1,19 @@
-# Pinned versions for reproducibility.
-# WHY exact pins (==) and not ranges: the trained model is stored as a joblib
-# .pkl of scikit-learn objects, and scikit-learn does NOT guarantee that a pickle
-# saved under one version loads under another. If train-time and deploy-time
-# scikit-learn differ, the app can silently break on load. Pinning ties the whole
-# chain (local train -> git -> Streamlit Cloud) to one known-good version set.
+# RUNTIME dependencies — exactly what the deployed Streamlit app needs to load
+# models/pipeline.pkl and serve predictions. Streamlit Community Cloud installs
+# THIS file, so keep it lean: heavy train/EDA-only packages (datasets, pyarrow via
+# huggingface, matplotlib) would blow past the ~1GB build memory limit.
 #
-# Chosen as a stable snapshot for Python 3.13: we deliberately avoid the newest
-# majors (pandas 3.x, datasets 5.x, huggingface_hub 1.x) because the surrounding
-# ecosystem tends to lag right after a major bump.
+# For local training / EDA / tests, install requirements-dev.txt instead (it pulls
+# this file in plus the dev extras).
+#
+# WHY exact pins (==): the model is a joblib .pkl of scikit-learn objects, and
+# scikit-learn does NOT guarantee a pickle saved under one version loads under
+# another. Pinning ties local-train -> git -> Cloud to one known-good version set.
+# Stable snapshot for Python 3.13 (avoids the newest majors that the ecosystem lags).
 
 scikit-learn==1.7.2
 scipy==1.15.3
 numpy==2.2.6
 pandas==2.3.3
-matplotlib==3.10.3
 joblib==1.5.1
 streamlit==1.51.0
-datasets==3.6.0
-huggingface_hub==0.34.4
-pytest==8.3.5

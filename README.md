@@ -26,7 +26,10 @@ trên **char n-gram**, dữ liệu **ViHSD**, demo bằng **Streamlit**.
 python -m venv .venv
 # Windows:  .venv\Scripts\activate
 # macOS/Linux:  source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # full set for train/EDA/test
+
+# Note: the deployed app installs only requirements.txt (runtime = load .pkl + serve).
+# requirements-dev.txt adds the train/EDA-only packages (datasets, matplotlib, pytest).
 
 huggingface-cli login                 # ViHSD là dataset gated — cần đăng nhập + đồng ý điều khoản
 python scripts/download_data.py       # tải ViHSD về data/raw/
