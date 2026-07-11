@@ -1,0 +1,34 @@
+# --- Data (never commit) ---
+# ViHSD is gated + licensed: it must be re-downloaded via scripts/download_data.py,
+# not redistributed through git. Keep the folders (via .gitkeep) but ignore contents.
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# --- Models ---
+# We DO commit the single deployable models/pipeline.pkl (small, lets the demo run
+# without touching the gated dataset). Ignore only intermediate/experimental dumps.
+models/*.pkl
+!models/pipeline.pkl
+models/*.joblib
+
+# --- Reports (generated artifacts, regenerable) ---
+reports/figures/*
+!reports/figures/.gitkeep
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- Environments ---
+.venv/
+venv/
+env/
+
+# --- Secrets ---
+.env
+.streamlit/secrets.toml
