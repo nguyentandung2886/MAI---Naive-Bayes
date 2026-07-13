@@ -1,0 +1,5 @@
+{
+  "operating_threshold": 0.9854087012828842,
+  "selection_rule": "max F1 on the toxic class, selected on dev only",
+  "date": "2026-07-13"
+}
