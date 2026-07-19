@@ -15,9 +15,14 @@ a single word reproduces exactly that word's n-grams — the same ones the model
 fit time (the analyzer also applies clean_text, so teencode like "NGUuuu" is folded to
 "ngu" before scoring). No cross-word n-grams to untangle.
 
-WHY censor gates on the classifier: masking is a moderation action, so it fires ONLY
-when the comment is actually blocked (P(toxic) >= operating_threshold, the exact rule
-and threshold src/evaluate.py locked on dev). A clean comment is returned untouched.
+WHY censor uses a profanity LEXICON, not the log-odds score: the per-word toxic log-odds
+measures "this word CO-OCCURS with toxicity", not "this word IS toxic" — innocent words
+like "mẹ", "bò", "dân" score very high because they appear next to profanity in training,
+so masking by score censors clean text badly. censor() instead masks a token iff it
+matches src.config.TOXIC_LEXICON exactly (after clean_text folds "nguuu" -> "ngu"). This
+is independent of the classifier: "Bạn nguuu thế" is masked even though its whole-comment
+P(toxic) sits under the block threshold, while "Yêu mẹ" is left untouched. The classifier
+verdict still lives in explain()'s `blocked`; the app flags a comment when EITHER fires.
 
 Streamlit calls explain()/censor() per keystroke, so the pipeline, the threshold, and
 the {n-gram: log-odds} map are all loaded/built ONCE at import and cached at module
@@ -36,7 +41,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import joblib  # noqa: E402
 
-from src.config import PIPELINE_PATH, THRESHOLD_PATH  # noqa: E402
+from src.config import PIPELINE_PATH, THRESHOLD_PATH, TOXIC_LEXICON  # noqa: E402
+from src.preprocessing import clean_text  # noqa: E402
 
 # --- LAST-RESORT fallback only. The frozen classifier is a Naive Bayes variant and
 # ALWAYS exposes feature_log_prob_, so the primary path below is what actually runs.
@@ -113,13 +119,34 @@ def _score_word(word: str) -> float:
     return float(sum(_NGRAM_LOG_ODDS.get(ng, 0.0) for ng in _ANALYZER(word)))
 
 
+# Everything that is NOT a Vietnamese letter or digit. Stripping these from a cleaned
+# token folds trailing punctuation ("ngu!" -> "ngu") and internal obfuscation dots/stars
+# ("đ.m" -> "đm", "c*c" -> "cc") onto the bare form we match against TOXIC_LEXICON.
+_NON_WORD = re.compile(
+    r"[^0-9a-zàáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]"
+)
+
+
+def _token_is_profane(word: str) -> bool:
+    """True iff an original whitespace token matches the profanity lexicon.
+
+    clean_text normalises the token exactly as at fit time (lowercase, "nguuu" -> "ngu"),
+    then we strip every non-letter/digit char and test EXACT membership in TOXIC_LEXICON.
+    Matching whole tokens (not substrings) is what keeps "Nguyễn"/"ngủ"/"nguy" clear of
+    "ngu". A token that clean_text splits (e.g. around a stripped URL) is profane if ANY
+    resulting piece matches.
+    """
+    return any(_NON_WORD.sub("", sub) in TOXIC_LEXICON for sub in clean_text(word).split())
+
+
 def explain(text: str) -> dict:
     """Attribute toxicity over the ORIGINAL text.
 
     Returns p_toxic (P of the toxic class), blocked (p_toxic >= operating_threshold,
-    the same rule as src/evaluate.py), and spans: one dict per whitespace token with
-    its original-string offsets, summed-log-odds score, and toxic flag (score > 0).
-    start/end index the ORIGINAL string so Stage 7 can highlight in place.
+    the classifier verdict, same rule as src/evaluate.py), and spans: one dict per
+    whitespace token with its original-string offsets, summed-log-odds score (kept for
+    the explanation table), and a toxic flag that is a LEXICON match — the same signal
+    censor() masks on. start/end index the ORIGINAL string so Stage 7 highlights in place.
     """
     text = text or ""
     p = _p_toxic(text)
@@ -133,31 +160,28 @@ def explain(text: str) -> dict:
                 "start": match.start(),
                 "end": match.end(),
                 "score": score,
-                "toxic": score > 0.0,
+                "toxic": _token_is_profane(word),
             }
         )
     return {"p_toxic": p, "blocked": p >= _THRESHOLD, "spans": spans}
 
 
 def censor(text: str) -> str:
-    """Mask the driving words of a BLOCKED comment; return a clean comment unchanged.
+    """Mask every token that matches the profanity lexicon; leave the rest untouched.
 
-    Gate on the classifier: if P(toxic) < operating_threshold the text is returned
-    verbatim. When blocked, every token scoring > 0 becomes "***"; masks are mapped
-    back by offset so the original whitespace (and non-masked tokens) are preserved,
-    and teencode stays a single "***" even though clean_text collapses it internally.
-    A blocked comment must always show at least one mask, so if no token scores > 0
-    (degenerate) we mask the single highest-scoring token.
+    Independent of the classifier: a token is masked iff _token_is_profane, so a mild
+    insult slips no matter how the whole-comment probability lands ("Bạn nguuu thế" ->
+    "Bạn *** thế"). If NO token matches the lexicon the text is returned verbatim — even
+    when the classifier flags it, we never mask a word we cannot name (the app's badge
+    carries that warning instead). Masks are mapped back by offset so the original
+    whitespace and non-masked tokens are preserved, and teencode stays a single "***"
+    even though clean_text collapses it internally.
     """
     text = text or ""
-    if _p_toxic(text) < _THRESHOLD:
-        return text
-
     matches = list(re.finditer(r"\S+", text))
-    scores = [_score_word(m.group()) for m in matches]
-    mask = [s > 0.0 for s in scores]
-    if matches and not any(mask):
-        mask[max(range(len(matches)), key=lambda i: scores[i])] = True
+    mask = [_token_is_profane(m.group()) for m in matches]
+    if not any(mask):
+        return text
 
     out: list[str] = []
     last = 0

@@ -18,6 +18,21 @@ ANALYZER: str = "char_wb"
 NGRAM_RANGE: tuple[int, int] = (2, 4)
 ALPHA: float = 1.0  # Laplace smoothing for (Complement)NB: avoids zero probabilities.
 
+# --- Word-level censoring lexicon ---
+# Roots of UNAMBIGUOUS Vietnamese profanity/insults, in the surface form clean_text
+# produces (lowercased, elongation collapsed: "nguuu" -> "ngu"). src.explain censors a
+# token iff it matches one of these EXACTLY (after clean_text), so obfuscation the model
+# score handles via co-occurrence ("mẹ", "bò", "dân" all score high yet are innocent) is
+# never mis-masked. Context-ambiguous words are deliberately EXCLUDED — "chó" (dog),
+# "mày"/"thằng" (rude but common pronouns), "vãi" (slang intensifier), "mẹ" (mother) —
+# because exact-matching them would censor "con chó dễ thương", "mày ơi", etc.
+# Curate this list by hand; it is a starting seed, not an exhaustive or learned set.
+TOXIC_LEXICON: frozenset[str] = frozenset({
+    "địt", "đụ", "đéo", "đéch", "đách", "cặc", "buồi", "lồn",
+    "đm", "đcm", "dcm", "đcmm", "clm", "cmm", "cml", "vcl", "vkl", "cứt",
+    "ngu", "ngốc", "đần", "khốn", "đĩ", "điếm",
+})
+
 # --- Paths (all derived from the project root so they work on any machine) ---
 # parents[1] == the toxic-comment-filter/ project root (this file is src/config.py).
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]

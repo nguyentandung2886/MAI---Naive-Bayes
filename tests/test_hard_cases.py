@@ -4,7 +4,7 @@ Three tiers, each with a different promise:
 
   (1) CONTRACT / robustness — MUST PASS on ANY input. Nothing crashes, explain()
       always returns the documented shape, every span slices the ORIGINAL string back
-      to its exact token, and censor() mirrors the block decision. This tier is
+      to its exact token, and censor() masks exactly the lexicon-flagged tokens. This tier is
       parametrized over every REAL obfuscated row in tests/hard_cases.py plus a set of
       pathological stress strings (empty, None, emoji-only, zero-width/fullwidth
       unicode, a very long paragraph, whitespace-only, embedded newlines, mega-repeat).
@@ -97,13 +97,14 @@ def test_every_span_indexes_the_original_text(text) -> None:
 
 
 @pytest.mark.parametrize("text", ALL_INPUTS)
-def test_censor_gates_on_blocked_and_always_returns_str(text) -> None:
-    # The moderation contract: censor mirrors the block decision. Not blocked -> text is
-    # returned verbatim; blocked -> at least one token is masked to "***".
+def test_censor_masks_lexicon_words_and_always_returns_str(text) -> None:
+    # The moderation contract: censor masks exactly the lexicon-flagged tokens, regardless
+    # of the classifier verdict. Any span flagged toxic -> "***" appears; none flagged ->
+    # the text is returned verbatim.
     r = explain(text)
     out = censor(text)
     assert isinstance(out, str)
-    if r["blocked"]:
+    if any(s["toxic"] for s in r["spans"]):
         assert "***" in out
     else:
         assert out == (text or "")

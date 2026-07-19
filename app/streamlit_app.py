@@ -48,26 +48,23 @@ def load_explainer():
 
 
 def _highlight_html(text: str, spans: list[dict]) -> str:
-    """Render the ORIGINAL text with each toxic word tinted by its own log-odds.
+    """Render the ORIGINAL text with each lexicon-flagged (masked) word highlighted.
 
-    alpha = word_score / max_positive_score, so the most toxic word is fully saturated
-    and milder ones fade out; a word with score <= 0 stays plain. Every character coming
-    from user input is html.escape()d first — raw input may contain < > & that would
-    otherwise break the layout or inject markup into the unsafe_allow_html render.
+    A word is tinted iff span["toxic"] — the SAME lexicon signal censor() masks on — so
+    the highlight always matches the "***" in the posted body. Highlighting is flat (the
+    match is binary), not graded by log-odds. Every character coming from user input is
+    html.escape()d first — raw input may contain < > & that would otherwise break the
+    layout or inject markup into the unsafe_allow_html render.
     """
-    # Guard division by zero: if nothing scores positive (degenerate block), no tint.
-    max_pos = max((s["score"] for s in spans if s["score"] > 0.0), default=0.0)
-
     parts: list[str] = []
     last = 0
     for s in spans:
         # Whitespace/gap before this token, kept verbatim (escaped) to preserve layout.
         parts.append(html.escape(text[last : s["start"]]))
         word = html.escape(text[s["start"] : s["end"]])
-        if s["score"] > 0.0 and max_pos > 0.0:
-            alpha = s["score"] / max_pos
+        if s["toxic"]:
             parts.append(
-                f'<span style="background: rgba({_HIGHLIGHT_RGB}, {alpha:.3f}); '
+                f'<span style="background: rgba({_HIGHLIGHT_RGB}, 0.85); '
                 f'border-radius: 4px; padding: 1px 3px;">{word}</span>'
             )
         else:
@@ -86,46 +83,55 @@ def _render_message(msg: dict) -> None:
     """Paint one stored turn. Pure over the stored dict so re-rendering the whole
     history on every rerun is cheap and never re-runs inference."""
     with st.chat_message("user"):
-        # Body = censored text when blocked, original text when clean.
+        # Body = censored text when a lexicon word is present, original text otherwise.
         st.write(msg["display"])
 
-        if not msg["blocked"]:
+        if not msg["flagged"]:
             return  # clean comment: no badge, no explanation panel
 
         st.badge(f"⚠️ Đã lọc · P(độc hại) = {msg['p_toxic']:.0%}", color="red")
 
-        with st.expander("Vì sao bị chặn?"):
-            # (a) Original text with inline colour highlight.
+        with st.expander("Vì sao bị lọc?"):
+            # (a) Original text with the masked words highlighted in place.
             st.markdown("**Bình luận gốc (tô đậm phần độc hại):**")
             st.markdown(
                 _highlight_html(msg["text"], msg["spans"]),
                 unsafe_allow_html=True,
             )
-            # (b) Table of flagged words + their log-odds, strongest first.
+            # (b) Table of the masked (lexicon) words + their log-odds, strongest first.
             flagged = sorted(
-                (s for s in msg["spans"] if s["score"] > 0.0),
+                (s for s in msg["spans"] if s["toxic"]),
                 key=lambda s: s["score"],
                 reverse=True,
             )
             if flagged:
-                st.markdown("**Từ bị gắn cờ & điểm log-odds:**")
+                st.markdown("**Từ bị che & điểm log-odds:**")
                 st.table(
                     [{"Từ": s["word"], "Log-odds": round(s["score"], 3)} for s in flagged]
+                )
+            else:
+                # Flagged by the classifier's overall score, with no single lexicon word.
+                st.caption(
+                    "Không có từ tục cụ thể để che — mô hình đánh giá TỔNG THỂ bình luận "
+                    f"là độc hại (P = {msg['p_toxic']:.0%})."
                 )
 
 
 def _process(text: str, explainer) -> dict:
     """Run inference ONCE per submitted comment and freeze everything the UI needs.
 
-    explain() gives the verdict + per-word spans; censor() gives the masked string
-    (it returns clean text unchanged). Both come from src.explain so the block, the
-    mask and the highlight always agree.
+    explain() gives the classifier verdict + per-word spans; censor() gives the masked
+    string (it returns text with no lexicon word unchanged). `flagged` — the moderation
+    trigger for the badge/panel — is the UI policy composed here: the comment is flagged
+    if the classifier blocks it OR any token matched the lexicon (so "Bạn nguuu thế" is
+    flagged even though the classifier alone does not block it). Highlight and mask both
+    key off span["toxic"], so the panel never contradicts the posted body.
     """
     result = explainer.explain(text)
     return {
         "text": text,
         "display": explainer.censor(text),
-        "blocked": result["blocked"],
+        "flagged": result["blocked"] or any(s["toxic"] for s in result["spans"]),
         "p_toxic": result["p_toxic"],
         "spans": result["spans"],
     }
@@ -137,7 +143,7 @@ def main() -> None:
     st.title("🛡️ Khung chat có kiểm duyệt")
     st.caption(
         "Gõ bình luận tiếng Việt. Bình luận độc hại vẫn được đăng nhưng bị che (***) "
-        "kèm cảnh báo; mở “Vì sao bị chặn?” để xem lời giải thích."
+        "kèm cảnh báo; mở “Vì sao bị lọc?” để xem lời giải thích."
     )
 
     # Load the model up front so a missing artifact fails with a friendly message

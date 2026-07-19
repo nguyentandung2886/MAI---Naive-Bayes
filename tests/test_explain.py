@@ -1,10 +1,13 @@
 """Tests for src.explain (Stage 6): word-level toxicity attribution + censoring.
 
-These pin the Stage 6 contract, all derived from the frozen model's OWN log-odds:
-  * explain() ranks the offensive words of a blocked comment highest, and leaves a
-    clean comment un-blocked;
-  * censor() masks ONLY when the classifier blocks (P(toxic) >= operating_threshold),
-    replaces whole toxic-leaning tokens with "***", and returns clean comments verbatim;
+These pin the Stage 6 contract:
+  * explain() reports the classifier verdict in `blocked` (P(toxic) >= threshold) and
+    still ranks words by the model's log-odds `score`; a span's `toxic` flag is now a
+    LEXICON match (src.config.TOXIC_LEXICON), not `score > 0`;
+  * censor() masks every token matching the profanity lexicon — regardless of the
+    classifier verdict — and returns text with no lexicon word verbatim. This is what
+    lets "Bạn nguuu thế" be masked even though the classifier alone does not block it,
+    while an innocent high-log-odds word like "mẹ" is left untouched;
   * the model's top toxic n-grams are intuitively offensive substrings;
   * the artifacts load ONCE (module-level cache), not per call.
 
@@ -44,13 +47,14 @@ def test_explain_returns_the_documented_shape() -> None:
 def test_explain_blocks_toxic_phrase_and_ranks_offensive_word_top() -> None:
     r = explain(TOXIC_PHRASE)
     assert r["blocked"] is True
-    # The three words all lean toxic here, but the strongest signal is the insult "ngu".
+    # The strongest log-odds signal is still the insult "ngu".
     top = max(r["spans"], key=lambda s: s["score"])
     assert top["word"] == "ngu"
-    # Every offensive word is flagged toxic (score > 0).
+    # `toxic` is now a lexicon match: "ngu" is in TOXIC_LEXICON, "vãi" is deliberately
+    # NOT (context-ambiguous slang), so only "ngu" is flagged for masking.
     by_word = {s["word"]: s for s in r["spans"]}
     assert by_word["ngu"]["toxic"] is True
-    assert by_word["vãi"]["toxic"] is True
+    assert by_word["vãi"]["toxic"] is False
 
 
 def test_explain_does_not_block_clean_phrase() -> None:
@@ -71,27 +75,42 @@ def test_explain_span_offsets_index_the_original_string() -> None:
         assert text[span["start"] : span["end"]] == span["word"]
 
 
-def test_censor_masks_every_toxic_word_when_blocked() -> None:
-    # All three tokens lean toxic, so all three are masked.
+def test_censor_masks_only_lexicon_words() -> None:
+    # Only "ngu" is in TOXIC_LEXICON; "đồ" and "vãi" are not, so they survive.
     out = censor(TOXIC_PHRASE)
-    assert out == "*** *** ***"
-    assert "ngu" not in out and "vãi" not in out
+    assert out == "đồ *** vãi"
+    assert "ngu" not in out
 
 
-def test_censor_is_selective_keeping_clean_words_in_a_blocked_comment() -> None:
-    # "thằng" and "ngu" are masked; the clean particle "ơi" survives intact.
-    assert censor(MIXED_BLOCKED_PHRASE) == "*** *** ơi"
+def test_censor_is_selective_keeping_non_lexicon_words() -> None:
+    # "ngu" is masked; "thằng" (rude pronoun, excluded as context-ambiguous) and the
+    # clean particle "ơi" survive intact.
+    assert censor(MIXED_BLOCKED_PHRASE) == "thằng *** ơi"
+
+
+def test_censor_masks_toxic_word_when_classifier_does_not_block() -> None:
+    # THE reported case: the classifier alone does NOT block this (polite framing pulls
+    # P(toxic) under threshold), yet "nguuu" -> clean_text -> "ngu" is in the lexicon, so
+    # the word is masked anyway. This is the whole point of lexicon-driven censoring.
+    assert explain("Bạn nguuu thế")["blocked"] is False
+    assert censor("Bạn nguuu thế") == "Bạn *** thế"
+
+
+def test_innocent_high_log_odds_word_is_not_masked() -> None:
+    # "mẹ" carries a high per-word log-odds (it co-occurs with "địt mẹ" in training) but
+    # is perfectly innocent here. It is NOT in the lexicon, so it must never be masked.
+    assert censor("Yêu mẹ") == "Yêu mẹ"
 
 
 def test_censor_returns_clean_comment_unchanged() -> None:
-    # Gate on the classifier: not blocked -> returned verbatim, nothing masked.
+    # No lexicon word present -> returned verbatim, nothing masked.
     assert censor(CLEAN_PHRASE) == CLEAN_PHRASE
 
 
 def test_censor_preserves_original_whitespace() -> None:
-    # Whole tokens are replaced but the original spacing (2 then 3 spaces) is kept,
+    # The masked token is replaced but the original spacing (2 then 3 spaces) is kept,
     # proving the mask is mapped back onto the original string by offset.
-    assert censor("đồ  ngu   vãi") == "***  ***   ***"
+    assert censor("đồ  ngu   vãi") == "đồ  ***   vãi"
 
 
 def test_top_toxic_ngrams_are_intuitively_offensive() -> None:
@@ -138,4 +157,4 @@ def test_artifacts_are_not_reloaded_per_call(monkeypatch) -> None:
 
     monkeypatch.setattr(ex.joblib, "load", _boom)
     assert ex.explain(TOXIC_PHRASE)["blocked"] is True
-    assert ex.censor(TOXIC_PHRASE) == "*** *** ***"
+    assert ex.censor(TOXIC_PHRASE) == "đồ *** vãi"
